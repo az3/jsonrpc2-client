@@ -1,20 +1,39 @@
 package com.thetransactioncompany.jsonrpc2.client;
 
 
-import java.io.*;
-import java.net.*;
-import java.security.*;
-import java.security.cert.*;
-import java.util.*;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
 
-import javax.net.ssl.*;
+import java.net.CookieManager;
+import java.net.CookiePolicy;
+import java.net.HttpCookie;
+import java.net.HttpURLConnection;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.net.URLConnection;
 
-import com.thetransactioncompany.jsonrpc2.*;
+import java.security.SecureRandom;
+import java.security.cert.X509Certificate;
+
+import java.util.Collections;
+import java.util.List;
+
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
+import com.thetransactioncompany.jsonrpc2.JSONRPC2Notification;
+import com.thetransactioncompany.jsonrpc2.JSONRPC2ParseException;
+import com.thetransactioncompany.jsonrpc2.JSONRPC2Request;
+import com.thetransactioncompany.jsonrpc2.JSONRPC2Response;
 
 
 /** 
- * Sends requests and / or notifications to a specified JSON-RPC 2.0 server URL.
- * The JSON-RPC 2.0 messages are dispatched by means of HTTP(S) POST.
+ * Sends requests and / or notifications to a specified JSON-RPC 2.0 server 
+ * URL. The JSON-RPC 2.0 messages are dispatched by means of HTTP(S) POST.
+ * This class is thread-safe.
  *
  * <p>The client-session class has a number of {@link JSONRPC2SessionOptions 
  * optional settings}. To change them pass a modified options instance to the
@@ -87,7 +106,7 @@ import com.thetransactioncompany.jsonrpc2.*;
  * </pre>
  *
  * @author Vladimir Dzhuvinov
- * @version 1.7.1 (2011-08-23)
+ * @author Mike Outland
  */
 public class JSONRPC2Session {
 
@@ -119,15 +138,15 @@ public class JSONRPC2Session {
 	
 	
 	/**
-	 * Optional HTTP cookie store. 
+	 * Optional HTTP cookie manager. 
 	 */
-	private Set<HttpCookie> cookies = new HashSet<HttpCookie>();
+	private CookieManager cookieManager;
 
 
 	/**
 	 * Trust-all-certs (including self-signed) SSL socket factory.
 	 */
-	private SSLSocketFactory trustAllSocketFactory;
+	private static final SSLSocketFactory trustAllSocketFactory = createTrustAllSocketFactory();
 
 
 	/**
@@ -136,39 +155,54 @@ public class JSONRPC2Session {
 	 * instance.
 	 *
 	 * @param url The server URL, e.g. "http://jsonrpc.example.com:8080".
+	 *            Must not be {@code null}.
 	 */
-	public JSONRPC2Session (final URL url) {
+	public JSONRPC2Session(final URL url) {
 
-		if (! url.getProtocol().equals("http") && ! url.getProtocol().equals("https"))	
+		if (! url.getProtocol().equalsIgnoreCase("http") && 
+		    ! url.getProtocol().equalsIgnoreCase("https")   )
 			throw new IllegalArgumentException("The URL protocol must be HTTP or HTTPS");
 
 		this.url = url;
 
+		// Default session options
+		options = new JSONRPC2SessionOptions();
 
-		// Initialise the trust-all-certs SSL socket factory
-
+		// No initial connection configurator
+		connectionConfigurator = null;
+	}
+	
+	
+	/**
+	 * Creates a trust-all-certificates SSL socket factory. Encountered 
+	 * exceptions are not rethrown.
+	 *
+	 * @return The SSL socket factory.
+	 */
+	public static SSLSocketFactory createTrustAllSocketFactory() {
+	
 		TrustManager[] trustAllCerts = new TrustManager[] {
-				new X509TrustManager() {
-					public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[]{}; }
-					public void checkClientTrusted(X509Certificate[] certs, String authType) { }
-					public void checkServerTrusted(X509Certificate[] certs, String authType) { }
-				}
+			
+			new X509TrustManager() {
+
+				public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[]{}; }
+
+				public void checkClientTrusted(X509Certificate[] certs, String authType) { }
+
+				public void checkServerTrusted(X509Certificate[] certs, String authType) { }
+			}
 		};
 
 		try {
 			SSLContext sc = SSLContext.getInstance("SSL");
 			sc.init(null, trustAllCerts, new SecureRandom());
-			trustAllSocketFactory = sc.getSocketFactory();
+			return sc.getSocketFactory();
 
 		} catch (Exception e) {
-			// ignore
+			
+			// Ignore
+			return null;
 		}
-
-		// Default session options
-		options = new JSONRPC2SessionOptions();
-
-		// Null connection configurator
-		connectionConfigurator = null;
 	}
 
 
@@ -186,10 +220,13 @@ public class JSONRPC2Session {
 	/**
 	 * Sets the JSON-RPC 2.0 server URL.
 	 *
-	 * @param url The server URL.
+	 * @param url The server URL. Must not be {@code null}.
 	 */
 	public void setURL(final URL url) {
 
+		if (url == null)
+			throw new IllegalArgumentException("The server URL must not be null");
+		
 		this.url = url;
 	}
 
@@ -213,7 +250,7 @@ public class JSONRPC2Session {
 	public void setOptions(final JSONRPC2SessionOptions options) {
 
 		if (options == null)
-			throw new NullPointerException("Client session options must not be null");
+			throw new IllegalArgumentException("The client session options must not be null");
 
 		this.options = options;
 	}
@@ -258,8 +295,8 @@ public class JSONRPC2Session {
 	 * 
 	 * @since 1.6
 	 * 
-	 * @return The optional inspector for the raw HTTP responses, {@code null} 
-	 *         if none is set.
+	 * @return The optional inspector for the raw HTTP responses, 
+	 *         {@code null} if none is set.
 	 */
 	public RawResponseInspector getRawResponseInspector() {
 		
@@ -268,18 +305,19 @@ public class JSONRPC2Session {
 	
 	
 	/**
-	 * Specifies an optional inspector for the raw HTTP responses to JSON-RPC
-	 * 2.0 requests and notifications. Its {@link RawResponseInspector#inspect
-	 * inspect} method will be called upon reception of a HTTP response.
+	 * Specifies an optional inspector for the raw HTTP responses to 
+	 * JSON-RPC 2.0 requests and notifications. Its 
+	 * {@link RawResponseInspector#inspect inspect} method will be called 
+	 * upon reception of a HTTP response.
 	 * 
-	 * <p>You can use the {@link RawResponseInspector} interface to retrieve
-	 * the unparsed response content and headers.
+	 * <p>You can use the {@link RawResponseInspector} interface to 
+	 * retrieve the unparsed response content and headers.
 	 * 
 	 * @since 1.6
 	 * 
 	 * @param responseInspector An optional inspector for the raw HTTP 
-	 *                          responses, {@code null} to remove a previously
-	 *                          set one.
+	 *                          responses, {@code null} to remove a 
+	 *                          previously set one.
 	 */
 	public void setRawResponseInspector(final RawResponseInspector responseInspector) {
 		
@@ -288,17 +326,21 @@ public class JSONRPC2Session {
 	
 	
 	/**
-	 * Gets all HTTP cookies currently stored in the client.
+	 * Gets all non-expired HTTP cookies currently stored in the client.
 	 * 
-	 * @return The HTTP cookies, or empty set if none were set by the server or
-	 *         cookies are not {@link JSONRPC2SessionOptions#acceptsCookies
-	 *         accepted}.
+	 * @return The HTTP cookies, or empty list if none were set by the 
+	 *         server or cookies are not 
+	 *         {@link JSONRPC2SessionOptions#acceptCookies accepted}.
 	 */
-	public Set<HttpCookie> getCookies() {
+	public List<HttpCookie> getCookies() {
 		
-		return cookies;
-	}
-	
+		if (cookieManager == null) {
+
+			return Collections.emptyList();
+		}
+
+		return cookieManager.getCookieStore().getCookies();
+	}	
 
 
 	/**
@@ -308,6 +350,9 @@ public class JSONRPC2Session {
 	 */
 	private void applyHeaders(final URLConnection con) {
 
+		// Expect UTF-8 for JSON
+		con.setRequestProperty("Accept-Charset", "UTF-8");
+
 		// Add "Content-Type" header?
 		if (options.getRequestContentType() != null)
 			con.setRequestProperty("Content-Type", options.getRequestContentType());
@@ -315,71 +360,215 @@ public class JSONRPC2Session {
 		// Add "Origin" header?
 		if (options.getOrigin() != null)
 			con.setRequestProperty("Origin", options.getOrigin());
+
+		// Add "Accept-Encoding: gzip, deflate" header?
+		if (options.enableCompression())
+			con.setRequestProperty("Accept-Encoding", "gzip, deflate");
 		
 		// Add "Cookie" headers?
-		if (options.acceptsCookies()) {
-			
-			Iterator <HttpCookie> it = cookies.iterator();
-			
+		if (options.acceptCookies()) {
+
 			StringBuilder buf = new StringBuilder();
 			
-			while (it.hasNext()) {
-				
-				HttpCookie c = it.next();
-				
-				buf.append(c.toString());
-				
-				// look ahead
-				if (it.hasNext())
+			for (HttpCookie cookie: getCookies()) {
+
+				if (buf.length() > 0)
 					buf.append("; ");
+
+				buf.append(cookie.toString());
 			}
-			
+
 			con.setRequestProperty("Cookie", buf.toString());
 		}
 	}
 	
 	
 	/**
-	 * Stores the cookies found the specified HTTP headers.
-	 * 
-	 * @param The HTTP headers to examine for "Set-Cookie" headers. Must not be
-	 *        {@code null}.
+	 * Creates and configures a new URL connection to the JSON-RPC 2.0 
+	 * server endpoint according to the session settings.
+	 *
+	 * @return The URL connection, configured and ready for output (HTTP 
+	 *         POST).
+	 *
+	 * @throws JSONRPC2SessionException If the URL connection couldn't be
+	 *                                  created or configured.
 	 */
-	private void storeCookies(final Map <String,List<String>> headers) {
+	private URLConnection createURLConnection()
+		throws JSONRPC2SessionException {
 		
-		if (headers == null)
-			throw new NullPointerException("The HTTP headers must not be null");
+		// Open HTTP connection
+		URLConnection con;
+
+		try {
+			// Use proxy?
+			if (options.getProxy() != null)
+				con = url.openConnection(options.getProxy());
+			else
+				con = url.openConnection();
+
+		} catch (IOException e) {
+
+			throw new JSONRPC2SessionException(
+					"Network exception: " + e.getMessage(),
+					JSONRPC2SessionException.NETWORK_EXCEPTION,
+					e);
+		}
 		
-		Iterator <Map.Entry<String,List<String>>> it = headers.entrySet().iterator();
+		con.setConnectTimeout(options.getConnectTimeout());
+		con.setReadTimeout(options.getReadTimeout());
+
+		applyHeaders(con);
+
+		// Set POST mode
+		con.setDoOutput(true);
+
+		// Set trust all certs SSL factory?
+		if (con instanceof HttpsURLConnection && options.trustsAllCerts()) {
 		
-		while (it.hasNext()) {
-			
-			Map.Entry <String,List<String>> h = it.next();
-			
-			// Careful: for some reason HttpURLConnection allows null header names!
-			if (  h          == null                       ||
-			      h.getKey() == null                       || 
-			    ! h.getKey().equalsIgnoreCase("Set-Cookie")  )
-				continue; // skip to next header
-			
-			Iterator <String> it2 = h.getValue().iterator();
-			
-			while (it2.hasNext()) {
-				
-				String cookieField = it2.next();
-				
-				if (cookieField == null)
-					continue; // skip
-				
-				try {
-					
-					cookies.addAll(HttpCookie.parse(cookieField));
-					
-				} catch (IllegalArgumentException e) {
-					// skip
-					continue;
-				}
+			if (trustAllSocketFactory == null) {
+				closeStreams(con);
+				throw new JSONRPC2SessionException("Couldn't obtain trust-all SSL socket factory");
 			}
+		
+			((HttpsURLConnection)con).setSSLSocketFactory(trustAllSocketFactory);
+		}
+
+		// Apply connection configurator?
+		if (connectionConfigurator != null)
+			connectionConfigurator.configure((HttpURLConnection)con);
+		
+		return con;
+	}
+	
+	
+	/**
+	 * Posts string data (i.e. JSON string) to the specified URL 
+	 * connection.
+	 *
+	 * @param con  The URL connection. Must be in HTTP POST mode. Must not 
+	 *             be {@code null}.
+	 * @param data The string data to post. Must not be {@code null}.
+	 *
+	 * @throws JSONRPC2SessionException If an I/O exception is encountered.
+	 */
+	private static void postString(final URLConnection con, final String data)
+		throws JSONRPC2SessionException {
+		
+		try {
+			OutputStreamWriter wr = new OutputStreamWriter(con.getOutputStream(), "UTF-8");
+			wr.write(data);
+			wr.flush();
+			wr.close();
+
+		} catch (IOException e) {
+
+			throw new JSONRPC2SessionException(
+					"Network exception: " + e.getMessage(),
+					JSONRPC2SessionException.NETWORK_EXCEPTION,
+					e);
+		}
+	}
+	
+	
+	/**
+	 * Reads the raw response from an URL connection (after HTTP POST). 
+	 * Invokes the {@link RawResponseInspector} if configured and stores 
+	 * any cookies {@link JSONRPC2SessionOptions#acceptCookies()} if
+	 * required}.
+	 *
+	 * @param con The URL connection. It should contain ready data for
+	 *            retrieval. Must not be {@code null}.
+	 *
+	 * @return The raw response.
+	 *
+	 * @throws JSONRPC2SessionException If an exception is encountered.
+	 */
+	private RawResponse readRawResponse(final URLConnection con)
+		throws JSONRPC2SessionException {
+	
+		RawResponse rawResponse;
+		
+		try {
+			rawResponse = RawResponse.parse((HttpURLConnection)con);
+
+		} catch (IOException e) {
+
+			throw new JSONRPC2SessionException(
+					"Network exception: " + e.getMessage(),
+					JSONRPC2SessionException.NETWORK_EXCEPTION,
+					e);
+		}
+		
+		if (responseInspector != null)
+			responseInspector.inspect(rawResponse);
+		
+		if (options.acceptCookies()) {
+
+			// Init cookie manager?
+			if (cookieManager == null)
+				cookieManager = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
+
+			try {
+				cookieManager.put(con.getURL().toURI(), rawResponse.getHeaderFields());
+
+			} catch (URISyntaxException e) {
+
+				throw new JSONRPC2SessionException(
+					"Network exception: " + e.getMessage(),
+					JSONRPC2SessionException.NETWORK_EXCEPTION,
+					e);
+
+			} catch (IOException e) {
+
+				throw new JSONRPC2SessionException(
+					"I/O exception: " + e.getMessage(),
+					JSONRPC2SessionException.NETWORK_EXCEPTION,
+					e);
+			}
+		}
+		
+		return rawResponse;
+	}
+
+
+	/**
+	 * Closes the input, output and error streams of the specified URL
+	 * connection. No attempt is made to close the underlying socket with
+	 * {@code conn.disconnect} so it may be cached (HTTP 1.1 keep live).
+	 * See http://techblog.bozho.net/caveats-of-httpurlconnection/
+	 *
+	 * @param con The URL connection. May be {@code null}.
+	 */
+	private static void closeStreams(final URLConnection con) {
+
+		if (con == null) {
+			return;
+		}
+
+		try {
+			if (con.getInputStream() != null) {
+				con.getInputStream().close();
+			}
+		} catch (Exception e) {
+			// ignore
+		}
+
+		try {
+			if (con.getOutputStream() != null) {
+				con.getOutputStream().close();
+			}
+		} catch (Exception e) {
+			// ignore
+		}
+
+		try {
+			HttpURLConnection httpCon = (HttpURLConnection)con;
+
+			if (httpCon.getErrorStream() != null) {
+				httpCon.getErrorStream().close();
+			}
+		} catch (Exception e) {
+			// ignore
 		}
 	}
 
@@ -388,7 +577,8 @@ public class JSONRPC2Session {
 	 * Sends a JSON-RPC 2.0 request using HTTP POST and returns the server
 	 * response.
 	 *
-	 * @param request The JSON-RPC 2.0 request to send.
+	 * @param request The JSON-RPC 2.0 request to send. Must not be 
+	 *                {@code null}.
 	 *
 	 * @return The JSON-RPC 2.0 response returned by the server.
 	 *
@@ -399,92 +589,45 @@ public class JSONRPC2Session {
 	public JSONRPC2Response send(final JSONRPC2Request request)
 		throws JSONRPC2SessionException {
 
-		// Open HTTP connection
-		URLConnection con = null;
+		// Create and configure URL connection to server endpoint
+		URLConnection con = createURLConnection();
+
+		final RawResponse rawResponse;
 
 		try {
+			// Send request encoded as JSON
+			postString(con, request.toString());
 
-			con = url.openConnection();
+			// Get the response
+			rawResponse = readRawResponse(con);
 
-		} catch (IOException e) {
-
-			throw new JSONRPC2SessionException(
-					"Network exception", 
-					JSONRPC2SessionException.NETWORK_EXCEPTION,
-					e);
+		} finally {
+			closeStreams(con);
 		}
 
-		applyHeaders(con);
+		// Check response content type
+		String contentType = rawResponse.getContentType();
 
-		// Set POST mode
-		con.setDoOutput(true);
+		if (! options.isAllowedResponseContentType(contentType)) {
 
-		// Set trust all certs SSL factory?
-		if (con instanceof HttpsURLConnection && options.trustsAllCerts()) 
-			((HttpsURLConnection)con).setSSLSocketFactory(trustAllSocketFactory);
+			String msg;
 
-		// Apply connection configurator?
-		if (connectionConfigurator != null)
-			connectionConfigurator.configure((HttpURLConnection)con);
+			if (contentType == null)
+				msg = "Missing Content-Type header in the HTTP response";
+			else
+				msg = "Unexpected \"" + contentType + "\" content type of the HTTP response";
 
-		// Send request encoded as JSON
-		try {
-			OutputStreamWriter wr = new OutputStreamWriter(con.getOutputStream());
-			wr.write(request.toString());
-			wr.flush();
-			wr.close();
-
-		} catch (IOException e) {
-
-			throw new JSONRPC2SessionException(
-					"Network exception",
-					JSONRPC2SessionException.NETWORK_EXCEPTION,
-					e);
-		}
-
-		// Get the response
-
-		RawResponse rawResponse = null;
-
-		try {
-
-			rawResponse = RawResponse.parse((HttpURLConnection)con);
-
-		} catch (IOException e) {
-
-			throw new JSONRPC2SessionException(
-					"Network exception",
-					JSONRPC2SessionException.NETWORK_EXCEPTION,
-					e);
-		}
-		
-		if (responseInspector != null)
-			responseInspector.inspect(rawResponse);
-		
-		if (options.acceptsCookies())
-			storeCookies(rawResponse.getHeaderFields());
-
-		// Check response content type?
-		if (options.getAllowedResponseContentTypes() != null) {
-
-			String mimeType = rawResponse.getContentType();
-
-			if (! options.isAllowedResponseContentType(mimeType)) {
-
-				throw new JSONRPC2SessionException(
-						"The server returned an unexpected content type '" + mimeType + "' response", 
-						JSONRPC2SessionException.UNEXPECTED_CONTENT_TYPE);
-			}
+			throw new JSONRPC2SessionException(msg, JSONRPC2SessionException.UNEXPECTED_CONTENT_TYPE);
 		}
 
 		// Parse and return the response
-		JSONRPC2Response response = null;
+		JSONRPC2Response response;
 
 		try {
 			response = JSONRPC2Response.parse(rawResponse.getContent(), 
-					options.preservesParseOrder(), 
-					options.ignoresVersion(),
-					options.parsesNonStdAttributes());
+					                  options.preservesParseOrder(), 
+							  options.ignoresVersion(),
+							  options.parsesNonStdAttributes());
 
 		} catch (JSONRPC2ParseException e) {
 
@@ -501,26 +644,20 @@ public class JSONRPC2Session {
 		Object reqID = request.getID();
 		Object resID = response.getID();
 
-		if (reqID != null && resID !=null && reqID.toString().equals(resID.toString()) ) {
-
+		if (reqID != null && resID != null && reqID.toString().equals(resID.toString()) ) {
 			// ok
-		}
-		else if (reqID == null && resID == null) {
-
+		} else if (reqID == null && resID == null) {
 			// ok
-		}
-		else if (! response.indicatesSuccess() && ( response.getError().getCode() == -32700 ||
-				response.getError().getCode() == -32600 ||
-				response.getError().getCode() == -32603    )) {
-
+		} else if (! response.indicatesSuccess() && ( response.getError().getCode() == -32700 ||
+			     response.getError().getCode() == -32600 ||
+			     response.getError().getCode() == -32603    )) {
 			// ok
-		}
-		else {
+		} else {
 			throw new JSONRPC2SessionException(
-					"Invalid JSON-RPC 2.0 response: ID mismatch: Returned " + resID.toString() + ", expected " + reqID.toString(),
+					"Invalid JSON-RPC 2.0 response: ID mismatch: Returned " + 
+					resID + ", expected " + reqID,
 					JSONRPC2SessionException.BAD_RESPONSE);
 		}
-
 
 		return response;
 	}
@@ -530,79 +667,25 @@ public class JSONRPC2Session {
 	 * Sends a JSON-RPC 2.0 notification using HTTP POST. Note that 
 	 * contrary to requests, notifications produce no server response.
 	 *
-	 * @param notification The JSON-RPC 2.0 notification to send.
+	 * @param notification The JSON-RPC 2.0 notification to send. Must not
+	 *                     be {@code null}.
 	 *
 	 * @throws JSONRPC2SessionException On a network error.
 	 */
 	public void send(final JSONRPC2Notification notification)
 		throws JSONRPC2SessionException {
 
-		// Open HTTP connection
-		URLConnection con = null;
-
-		try {
-			con = url.openConnection();
-
-		} catch (IOException e) {
-
-			throw new JSONRPC2SessionException(
-					"Network exception", 
-					JSONRPC2SessionException.NETWORK_EXCEPTION,
-					e);
-		}
-
-		applyHeaders(con);
-
-		// Set POST mode
-		con.setDoOutput(true);
-
-		// Set trust all certs SSL factory?
-		if (con instanceof HttpsURLConnection && options.trustsAllCerts()) 
-			((HttpsURLConnection)con).setSSLSocketFactory(trustAllSocketFactory);
-
-
-		// Apply connection configurator?
-		if (connectionConfigurator != null)
-			connectionConfigurator.configure((HttpURLConnection)con);
-
+		// Create and configure URL connection to server endpoint
+		URLConnection con = createURLConnection();
 
 		// Send notification encoded as JSON
 		try {
-			OutputStreamWriter wr = new OutputStreamWriter(con.getOutputStream());
-			wr.write(notification.toString());
-			wr.flush();
-			wr.close();
+			postString(con, notification.toString());
 
-		} catch (IOException e) {
+		} finally {
 
-			throw new JSONRPC2SessionException(
-					"Network exception",
-					JSONRPC2SessionException.NETWORK_EXCEPTION,
-					e);
+			closeStreams(con);
 		}
-
-
-		// Get the response /for the inspector only/
-
-		RawResponse rawResponse = null;
-		
-		try {
-
-			rawResponse = RawResponse.parse((HttpURLConnection)con);
-
-		} catch (IOException e) {
-
-			throw new JSONRPC2SessionException(
-					"Network exception",
-					JSONRPC2SessionException.NETWORK_EXCEPTION,
-					e);
-		}
-		
-		if (responseInspector != null)
-			responseInspector.inspect(rawResponse);
-		
-		if (options.acceptsCookies())
-			storeCookies(rawResponse.getHeaderFields());
 	}
 }
 

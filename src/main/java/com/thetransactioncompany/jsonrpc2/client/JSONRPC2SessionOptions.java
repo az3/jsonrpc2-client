@@ -1,9 +1,9 @@
 package com.thetransactioncompany.jsonrpc2.client;
 
 
-import java.util.regex.*;
+import java.net.Proxy;
 
-import com.thetransactioncompany.jsonrpc2.*;
+import java.util.regex.Pattern;
 
 
 /**
@@ -16,25 +16,29 @@ import com.thetransactioncompany.jsonrpc2.*;
  * <p>Overview of the available session options:
  *
  * <ul>
- *     <li>Customise the "Content-Type" header in HTTP POST requests.</li>
- *     <li>Set an "Origin" header in HTTP POST requests to simulate Cross-Origin
- *         Resource Sharing (CORS) requests from a browser.</li>
+ *     <li>Customise the "Content-Type" header in HTTP POST requests.
+ *     <li>Set an "Origin" header in HTTP POST requests to simulate 
+ *         Cross-Origin Resource Sharing (CORS) requests from a browser.
  *     <li>Accept HTTP cookies (if client sessions are established by this 
  *         mean instead of through the JSON-RPC protocol itself).
  *     <li>Customise the allowable "Content-Type" header values in HTTP POST
- *         responses.</li>
+ *         responses.
  *     <li>Preserve parse order of JSON object members in JSON-RPC 2.0 response
- *         results (for human-facing clients, e.g. the JSON-RPC 2.0 Shell).</li>
+ *         results (for human-facing clients, e.g. the JSON-RPC 2.0 Shell).
  *     <li>Ignore version 2.0 checks when parsing responses to allow client 
- *         sessions to older JSON-RPC (1.0) servers.</li>
+ *         sessions to older JSON-RPC (1.0) servers.
  *     <li>Parse non-standard attributes in JSON-RPC 2.0 responses.
+ *     <li>Set an HTTP connect timeout.
+ *     <li>Set an HTTP read timeout.
+ *     <li>Set an HTTP proxy.
+ *     <li>Enable HTTP response compression (using GZIP or DEFLATE content
+ *         encoding).
  *     <li>Trust all X.509 server certificates (for HTTPS connections), 
- *         including self-signed.</li>
+ *         including self-signed.
  * </ul>
  *
  * @since 1.4
  * @author Vladimir Dzhuvinov
- * @version 1.7.1 (2011-08-23)
  */
 public class JSONRPC2SessionOptions {
 	
@@ -47,29 +51,31 @@ public class JSONRPC2SessionOptions {
 	
 	
 	/**
-	 * The default "Content-Type" (MIME) header value of HTTP POST requests.
-	 * Set to {@code application/json}.
+	 * The default "Content-Type" (MIME) header value of HTTP POST 
+	 * requests. Set to {@code application/json}.
 	 */
 	public static final String DEFAULT_CONTENT_TYPE = "application/json";
 	
 	
 	/**
-	 * The allowed "Content-Type" (MIME) header values of HTTP responses. If
-	 * {@code null} any header value will be accepted.
+	 * The allowed "Content-Type" (MIME) header values of HTTP responses. 
+	 * If {@code null} any header value will be accepted.
 	 */
-	private String[] allowedResponseContentTypes = DEFAULT_ALLOWED_RESPONSE_CONTENT_TYPES;
+	private String[] allowedResponseContentTypes = 
+		DEFAULT_ALLOWED_RESPONSE_CONTENT_TYPES;
 	
 	
 	/**
 	 * The default allowed "Content-Type" (MIME) header values of HTTP
 	 * responses. Set to {@code application/json} and {@code text/plain}.
 	 */
-	public static final String[] DEFAULT_ALLOWED_RESPONSE_CONTENT_TYPES = {"application/json", "text/plain"};
+	public static final String[] DEFAULT_ALLOWED_RESPONSE_CONTENT_TYPES =
+		{"application/json", "text/plain"};
 	 
 	 
 	/** 
-	 * Optional CORS "Origin" header. If {@code null} the header will not be
-	 * set.
+	 * Optional CORS "Origin" header. If {@code null} the header will not 
+	 * be set.
 	 */
 	private String origin = DEFAULT_ORIGIN;
 	
@@ -96,7 +102,8 @@ public class JSONRPC2SessionOptions {
 	 * If {@code true} the order of parsed JSON object members must be
 	 * preserved.
 	 */
-	private boolean preserveObjectMemberOrder = DEFAULT_PRESERVE_OBJECT_MEMBER_ORDER;
+	private boolean preserveObjectMemberOrder = 
+		DEFAULT_PRESERVE_OBJECT_MEMBER_ORDER;
 	
 	
 	/**
@@ -132,6 +139,50 @@ public class JSONRPC2SessionOptions {
 	 * 2.0 messages. Set to {@code false} (non-standard attributes ignored).
 	 */
 	public static final boolean DEFAULT_PARSE_NON_STD_ATTRIBUTES = false;
+	
+	
+	/**
+	 * The HTTP connect timeout, in milliseconds. Zero implies the option 
+	 * is disabled (timeout of infinity).
+	 */
+	private int connectTimeout = DEFAULT_CONNECT_TIMEOUT;
+	
+	
+	/**
+	 * The default HTTP connect timeout. Set to zero (disabled).
+	 */
+	public static final int DEFAULT_CONNECT_TIMEOUT = 0;
+	
+	
+	/**
+	 * The HTTP read timeout, in milliseconds. Zero implies the option is
+	 * disabled (timeout of infinity).
+	 */
+	private int readTimeout = DEFAULT_READ_TIMEOUT;
+	
+	
+	/**
+	 * The default HTTP read timeout. Set to zero (disabled).
+	 */
+	public static final int DEFAULT_READ_TIMEOUT = 0;
+
+
+	/**
+	 * Optional HTTP proxy.
+	 */
+	private Proxy proxy = null;
+
+
+	/**
+	 * Enable / disable HTTP GZIP and DEFLATE compression.
+	 */
+	private boolean enableCompression = DEFAULT_ENABLE_COMPRESSION;
+
+
+	/**
+	 * The default HTTP GZIP and DEFLATE compression enable policy.
+	 */
+	public static final boolean DEFAULT_ENABLE_COMPRESSION = false;
 	
 	
 	/**
@@ -171,6 +222,17 @@ public class JSONRPC2SessionOptions {
 	 *
 	 * <p>Strict 2.0 version checking will be performed. To ignore the
 	 * JSON-RPC version attribute use {@link #ignoreVersion(boolean)}.
+	 *
+	 * <p>HTTP connect timeouts will be disabled. To specify a value use
+	 * {@link #setConnectTimeout}.
+	 *
+	 * <p>HTTP read timeouts will be disabled. To specify a value use
+	 * {@link #setReadTimeout}.
+	 *
+	 * <p>No proxy is used. To specify one use {@link #setProxy}.
+	 *
+	 * <p>HTTP response compression (GZIP or DEFLATE) is disabled. To 
+	 * enable it use {@link #enableCompression(boolean)}.
 	 *
 	 * <p>Self-signed X.509 certificates presented by the JSON-RPC 2.0
 	 * server will not be accepted. To relax certificate cheking use
@@ -247,7 +309,7 @@ public class JSONRPC2SessionOptions {
 	 * @return {@code true} if HTTP cookies are accepted, else 
 	 *         {@code false}.
 	 */
-	public boolean acceptsCookies() {
+	public boolean acceptCookies() {
 	
 		return acceptCookies;
 	}
@@ -372,8 +434,8 @@ public class JSONRPC2SessionOptions {
 	 * JSON-RPC 2.0 responses must strictly conform to the JSON-RPC 2.0 
 	 * specification.
 	 *
-	 * @return {@code true} if the {@code "jsonrpc":"2.0"} version attribute
-	 *         is ignored, {@code false} if parsing is strict.
+	 * @return {@code true} if the {@code "jsonrpc":"2.0"} version 
+	 *         attribute is ignored, {@code false} if parsing is strict.
 	 */
 	public boolean ignoresVersion() {
 	
@@ -424,6 +486,123 @@ public class JSONRPC2SessionOptions {
 	
 	
 	/**
+	 * Sets the HTTP connect timeout.
+	 *
+	 * @since 1.8
+	 *
+	 * @param timeout The HTTP connect timeout, in milliseconds. Zero
+	 *                implies the option is disabled (timeout of infinity).
+	 */
+	public void setConnectTimeout(final int timeout) {
+	
+		if (timeout < 0)
+			throw new IllegalArgumentException("The HTTP connect timeout must be zero or positive");
+		
+		connectTimeout = timeout;
+	}
+	
+	
+	/**
+	 * Gets the HTTP connect timeout.
+	 *
+	 * @since 1.8
+	 *
+	 * @return The HTTP connect timeout, in milliseconds. Zero implies the
+	 *         option is disabled (timeout of infinity).
+	 */
+	public int getConnectTimeout() {
+	
+		return connectTimeout;
+	}
+	
+	
+	/**
+	 * Sets the HTTP read timeout.
+	 *
+	 * @since 1.8
+	 *
+	 * @param timeout The HTTP read timeout, in milliseconds. Zero implies
+	 *                the option is disabled (timeout of infinity).
+	 */
+	public void setReadTimeout(final int timeout) {
+	
+		if (timeout < 0)
+			throw new IllegalArgumentException("The HTTP read timeout must be zero or positive");
+		
+		readTimeout = timeout;
+	}
+	
+	
+	/**
+	 * Gets the HTTP read timeout.
+	 *
+	 * @since 1.8
+	 *
+	 * @return The HTTP read timeout, in milliseconds. Zero implies the 
+	 *         option is disabled (timeout of infinity).
+	 */
+	public int getReadTimeout() {
+	
+		return readTimeout;
+	}
+
+
+	/**
+	 * Sets an HTTP proxy.
+	 *
+	 * @since 1.10
+	 *
+	 * @param proxy The HTTP proxy to use, {@code null} if none.
+	 */
+	public void setProxy(final Proxy proxy) {
+
+		this.proxy = proxy;
+	}
+
+
+	/**
+	 * Gets the HTTP proxy.
+	 *
+	 * @since 1.10
+	 *
+	 * @return The HTTP proxy to use, {@code null} if none.
+	 */
+	public Proxy getProxy() {
+
+		return proxy;
+	}
+
+
+	/**
+	 * Enables or disables HTTP response compression using GZIP or DEFLATE
+	 * content encoding. If compression is enabled but the HTTP server 
+	 * doesn't support compression this setting will have no effect.
+	 *
+	 * @param enable If {@code true} HTTP compression will be enabled, 
+	 *               else compression will be disabled.
+	 */
+	public void enableCompression(final boolean enable) {
+
+		enableCompression = enable;
+	}
+
+
+	/**
+	 * Checks if HTTP response compression using GZIP or DEFLATE content 
+	 * encoding is enabled or disabled. If compression is enabled but the 
+	 * HTTP server doesn't support compression this setting will have no 
+	 * effect.
+	 *
+	 * @return {@code true} if HTTP compression is enabled, else 
+	 *         {@code false}.
+	 */
+	public boolean enableCompression() {
+
+		return enableCompression;
+	}
+	
+	
+	/**
 	 * Controls checking of X.509 certificates presented by the server when
 	 * establishing a secure HTTPS connection. The default behaviour is to 
 	 * accept only certicates issued by a trusted certificate authority 
@@ -440,7 +619,6 @@ public class JSONRPC2SessionOptions {
 	public void trustAllCerts(final boolean trustAll) {
 	
 		this.trustAll = trustAll;
-		
 	}
 	
 	

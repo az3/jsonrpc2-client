@@ -8,7 +8,6 @@ package com.thetransactioncompany.jsonrpc2.client;
  *
  * @since 1.6
  * @author Vladimir Dzhuvinov
- * @version 1.7.1 (2011-08-23)
  */
 public interface RawResponseInspector {
 
@@ -17,7 +16,7 @@ public interface RawResponseInspector {
 	 * Allows for inspection of the specified raw HTTP response to a JSON-RPC
 	 * 2.0 request or nofitication.
 	 *
-	 * @param rawResponse The raw HTTP response.
+	 * @param rawResponse The raw HTTP response. Must not be {@code null}.
 	 */
 	public void inspect(final RawResponse rawResponse);
 

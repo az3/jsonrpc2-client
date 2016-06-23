@@ -6,7 +6,6 @@ package com.thetransactioncompany.jsonrpc2.client;
  * cause type to be specified to ease diagnostics and exception reporting.
  *
  * @author Vladimir Dzhuvinov
- * @version 1.7.1 (2012-02-16)
  */
 public class JSONRPC2SessionException extends Exception {
 
@@ -53,14 +52,14 @@ public class JSONRPC2SessionException extends Exception {
 	 * Indicates the type of cause for this exception, see
 	 * constants.
 	 */
-	private int causeType;
+	private final int causeType;
 	
 	
 	/**
 	 * Creates a new JSON-RPC 2.0 session exception with the specified 
 	 * message; the cause type is {@link #UNSPECIFIED}.
 	 *
-	 * @param message   The message.
+	 * @param message The message.
 	 */
 	public JSONRPC2SessionException(final String message) {
 	
